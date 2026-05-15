@@ -7,6 +7,9 @@ set -euo pipefail
 : "${TF_BACKEND_CONTAINER:?TF_BACKEND_CONTAINER is required}"
 : "${AZURE_LOCATION:?AZURE_LOCATION is required}"
 
+export AZURE_STORAGE_AUTH_MODE=login
+export AZURE_STORAGE_ACCOUNT="${TF_BACKEND_STORAGE_ACCOUNT}"
+
 az group create \
   --name "${TF_BACKEND_RESOURCE_GROUP}" \
   --location "${AZURE_LOCATION}" \
@@ -27,7 +30,6 @@ az storage account create \
 
 az storage container create \
   --name "${TF_BACKEND_CONTAINER}" \
-  --account-name "${TF_BACKEND_STORAGE_ACCOUNT}" \
   --output none
 
 az storage account blob-service-properties update \
