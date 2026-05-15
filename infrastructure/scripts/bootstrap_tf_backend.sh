@@ -28,7 +28,6 @@ az storage account create \
 az storage container create \
   --name "${TF_BACKEND_CONTAINER}" \
   --account-name "${TF_BACKEND_STORAGE_ACCOUNT}" \
-  --auth-mode login \
   --output none
 
 az storage account blob-service-properties update \
@@ -39,5 +38,4 @@ az storage account blob-service-properties update \
   --delete-retention-days 14 \
   --enable-container-delete-retention true \
   --container-delete-retention-days 14 \
-  --auth-mode login \
   --output none
