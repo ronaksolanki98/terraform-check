@@ -1,0 +1,15 @@
+location                  = "Central India"
+resource_group_name       = "devbridge-platform-rg"
+vnet_name                 = "devbridge-platform-vnet"
+vnet_address_space        = ["10.1.0.0/16"]
+subnet_name               = "app-subnet"
+subnet_prefixes           = ["10.1.1.0/24"]
+blob_storage_account_name = "devbridgeplatblob01"
+blob_container_names      = ["appdata"]
+key_vault_name            = "devbridge-platform-kv"
+
+tags = {
+  project = "devbridge-platform"
+  owner   = "platform-team"
+  env     = "prod"
+}

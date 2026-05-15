@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Terraform local working directories and state
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform variable files that may contain secrets
+*.tfvars
+*.tfvars.json
+
+# Keep dependency lock files tracked
+!**/.terraform.lock.hcl

@@ -1,0 +1,6 @@
+resource_group_name  = "devbridge-tfstate-rg"
+storage_account_name = "devbridgetfstate01"
+container_name       = "tfstate"
+key                  = "platform/prod.tfstate"
+use_oidc             = true
+use_azuread_auth     = true
