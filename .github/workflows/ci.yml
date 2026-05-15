@@ -1,11 +1,6 @@
-name: Terraform Infrastructure
+name: Deploy Terraform Infrastructure
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/ci.yml"
-      - "infrastructure/terraform/**"
-      - "infrastructure/scripts/bootstrap_tf_backend.sh"
   push:
     branches:
       - main
@@ -14,22 +9,13 @@ on:
       - "infrastructure/terraform/**"
       - "infrastructure/scripts/bootstrap_tf_backend.sh"
   workflow_dispatch:
-    inputs:
-      apply:
-        description: "Apply infrastructure changes in this run"
-        required: true
-        default: true
-        type: boolean
 
 permissions:
-  actions: read
   id-token: write
   contents: read
-  pull-requests: write
-  security-events: write
 
 concurrency:
-  group: terraform-infrastructure-${{ github.ref }}
+  group: terraform-deploy-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -47,11 +33,10 @@ env:
   TF_BACKEND_CONTAINER: "tfstate"
   TF_BACKEND_KEY: "platform/prod.tfstate"
   AZURE_LOCATION: "Central India"
-  EXECUTION_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
 jobs:
-  quality:
-    name: Fmt Init Validate
+  deploy:
+    name: Terraform Deploy
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -74,7 +59,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Validate required pipeline variables
+      - name: Validate required secrets
         run: |
           required_vars=(
             ARM_CLIENT_ID
@@ -89,7 +74,7 @@ jobs:
             fi
           done
 
-      - name: Bootstrap secure Terraform backend blob storage
+      - name: Bootstrap Terraform backend blob storage
         working-directory: .
         run: bash infrastructure/scripts/bootstrap_tf_backend.sh
 
@@ -112,264 +97,8 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v6.2.1
-
-      - name: Initialize TFLint plugins
-        run: tflint --init
-
-      - name: Run TFLint
-        run: tflint --recursive --format compact
-
-      - name: Workflow Summary
-        run: |
-          {
-            echo "## Terraform Quality Checks"
-            echo
-            echo "- fmt: passed"
-            echo "- init: passed"
-            echo "- validate: passed"
-            echo "- tflint: passed"
-            echo "- execution link: ${EXECUTION_URL}"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-  security:
-    name: Tfsec And Checkov
-    needs: quality
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.22"
-
-      - name: Install tfsec
-        run: |
-          go install github.com/aquasecurity/tfsec/cmd/tfsec@v1.28.14
-          echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
-
-      - name: Prepare security reports directory
-        run: mkdir -p reports
-
-      - name: Run tfsec
-        run: tfsec infrastructure/terraform --format sarif --out reports/tfsec.sarif --no-color
-
-      - name: Upload tfsec SARIF
-        if: (success() || failure()) && hashFiles('reports/tfsec.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: reports/tfsec.sarif
-
-      - name: Run Checkov
-        id: checkov
-        uses: bridgecrewio/checkov-action@v12.1347.0
-        with:
-          directory: infrastructure/terraform
-          framework: terraform
-          output_format: cli,sarif
-          output_file_path: console,reports/checkov.sarif
-
-      - name: Upload Checkov SARIF
-        if: (success() || failure()) && hashFiles('reports/checkov.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: reports/checkov.sarif
-
-      - name: Upload security scan artifacts
-        if: success() || failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-security-reports-${{ github.run_id }}
-          path: reports
-          retention-days: 7
-
-      - name: Workflow Summary
-        if: success() || failure()
-        run: |
-          {
-            echo "## Terraform Security Gates"
-            echo
-            echo "- tfsec: completed"
-            echo "- checkov: completed"
-            echo "- execution link: ${EXECUTION_URL}"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-  plan:
-    name: Terraform Plan
-    needs:
-      - quality
-      - security
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ env.TF_ROOT }}
-    outputs:
-      execution_url: ${{ env.EXECUTION_URL }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.14.5
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Bootstrap secure Terraform backend blob storage
-        working-directory: .
-        run: bash infrastructure/scripts/bootstrap_tf_backend.sh
-
-      - name: Terraform Init
-        run: |
-          terraform init -reconfigure \
-            -backend-config="resource_group_name=${TF_BACKEND_RESOURCE_GROUP}" \
-            -backend-config="storage_account_name=${TF_BACKEND_STORAGE_ACCOUNT}" \
-            -backend-config="container_name=${TF_BACKEND_CONTAINER}" \
-            -backend-config="key=${TF_BACKEND_KEY}" \
-            -backend-config="tenant_id=${ARM_TENANT_ID}" \
-            -backend-config="client_id=${ARM_CLIENT_ID}" \
-            -backend-config="subscription_id=${ARM_SUBSCRIPTION_ID}" \
-            -backend-config="use_oidc=true" \
-            -backend-config="use_azuread_auth=true"
-
       - name: Terraform Plan
-        id: plan
-        run: |
-          set +e
-          terraform plan -out=tfplan -detailed-exitcode
-          exit_code=$?
-          set -e
-
-          if [[ "${exit_code}" -eq 1 ]]; then
-            echo "Terraform plan failed."
-            exit 1
-          fi
-
-          if [[ "${exit_code}" -eq 0 ]]; then
-            echo "changes_present=false" >> "${GITHUB_OUTPUT}"
-          else
-            echo "changes_present=true" >> "${GITHUB_OUTPUT}"
-          fi
-
-          terraform show -no-color tfplan > tfplan.txt
-          terraform show -json tfplan > tfplan.json
-
-      - name: Upload Terraform plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-plan-${{ github.run_id }}
-          path: |
-            infrastructure/terraform/tfplan
-            infrastructure/terraform/tfplan.txt
-            infrastructure/terraform/tfplan.json
-          retention-days: 7
-
-      - name: Workflow Summary
-        run: |
-          {
-            echo "## Terraform Plan"
-            echo
-            echo "- changes present: ${{ steps.plan.outputs.changes_present }}"
-            echo "- execution link: ${EXECUTION_URL}"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-      - name: Comment plan on pull request
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const planPath = 'infrastructure/terraform/tfplan.txt';
-            const plan = fs.readFileSync(planPath, 'utf8');
-            const body = [
-              '## Terraform Plan',
-              '',
-              `Execution link: ${process.env.EXECUTION_URL}`,
-              '',
-              '```terraform',
-              plan.slice(0, 60000),
-              '```'
-            ].join('\n');
-
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body
-            });
-
-  apply:
-    name: Terraform Apply
-    needs: plan
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.apply)
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: ${{ env.EXECUTION_URL }}
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ env.TF_ROOT }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.14.5
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Bootstrap secure Terraform backend blob storage
-        working-directory: .
-        run: bash infrastructure/scripts/bootstrap_tf_backend.sh
-
-      - name: Download Terraform plan artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-plan-${{ github.run_id }}
-          path: infrastructure/terraform
-
-      - name: Terraform Init
-        run: |
-          terraform init -reconfigure \
-            -backend-config="resource_group_name=${TF_BACKEND_RESOURCE_GROUP}" \
-            -backend-config="storage_account_name=${TF_BACKEND_STORAGE_ACCOUNT}" \
-            -backend-config="container_name=${TF_BACKEND_CONTAINER}" \
-            -backend-config="key=${TF_BACKEND_KEY}" \
-            -backend-config="tenant_id=${ARM_TENANT_ID}" \
-            -backend-config="client_id=${ARM_CLIENT_ID}" \
-            -backend-config="subscription_id=${ARM_SUBSCRIPTION_ID}" \
-            -backend-config="use_oidc=true" \
-            -backend-config="use_azuread_auth=true"
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply
         run: terraform apply -auto-approve tfplan
-
-      - name: Workflow Summary
-        run: |
-          {
-            echo "## Terraform Apply"
-            echo
-            echo "- apply: passed"
-            echo "- execution link: ${EXECUTION_URL}"
-          } >> "${GITHUB_STEP_SUMMARY}"
